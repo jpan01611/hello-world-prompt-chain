@@ -1,0 +1,4 @@
+import { requireSuperadmin } from '@/lib/auth';
+import ChainBuilder from './ChainBuilder';
+export default async function ChainsPage() { const { supabase } = await requireSuperadmin(); const { data: chains, error } = await supabase.from('prompt_chains').select('id, name, description, active, prompt_chain_steps(id, step_order, name, prompt), prompt_chain_runs(id, input, output, created_at)').order('created_at', { ascending: false }); if (error) throw new Error(`Unable to load prompt chains: ${error.message}`); const initialChains = (chains ?? []).map((chain) => ({ id: chain.id, name: chain.name, description: chain.description, active: chain.active, steps: [...(chain.prompt_chain_steps ?? [])].sort((a,b) => a.step_order - b.step_order), runs: [...(chain.prompt_chain_runs ?? [])].sort((a,b) => +new Date(b.created_at) - +new Date(a.created_at)) })); return <ChainBuilder initialChains={initialChains} />; }
+

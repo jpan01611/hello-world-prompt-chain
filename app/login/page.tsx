@@ -1,0 +1,4 @@
+import { createClient } from '@/lib/supabase/server';
+import { redirect } from 'next/navigation';
+export default function Login() { async function signIn(formData: FormData) { 'use server'; const supabase = await createClient(); const email = String(formData.get('email') ?? ''); const password = String(formData.get('password') ?? ''); const { error } = await supabase.auth.signInWithPassword({ email, password }); if (error) redirect(`/login?error=${encodeURIComponent(error.message)}`); redirect('/chains'); } return <main className="center-page"><form className="auth-card" action={signIn}><p className="eyebrow">Prompt Chain Studio</p><h1>Sign in</h1><p className="muted">Superadmin access is required.</p><label>Email<input name="email" type="email" required autoComplete="email" /></label><label>Password<input name="password" type="password" required autoComplete="current-password" /></label><button type="submit">Continue</button></form></main>; }
+
