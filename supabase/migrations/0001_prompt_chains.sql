@@ -5,7 +5,10 @@ create table if not exists public.prompt_chain_runs (id uuid primary key default
 create index if not exists prompt_chain_steps_chain_order_idx on public.prompt_chain_steps(chain_id, step_order);
 create index if not exists prompt_chain_runs_chain_created_idx on public.prompt_chain_runs(chain_id, created_at desc);
 alter table public.prompt_chains enable row level security; alter table public.prompt_chain_steps enable row level security; alter table public.prompt_chain_runs enable row level security;
-drop policy if exists "Superadmins manage chains" on public.prompt_chains;`ncreate policy "Superadmins manage chains" on public.prompt_chains for all to authenticated using (public.is_superadmin()) with check (public.is_superadmin());
-drop policy if exists "Superadmins manage chain steps" on public.prompt_chain_steps;`ncreate policy "Superadmins manage chain steps" on public.prompt_chain_steps for all to authenticated using (public.is_superadmin()) with check (public.is_superadmin());
-drop policy if exists "Superadmins manage chain runs" on public.prompt_chain_runs;`ncreate policy "Superadmins manage chain runs" on public.prompt_chain_runs for all to authenticated using (public.is_superadmin()) with check (public.is_superadmin());
+drop policy if exists "Superadmins manage chains" on public.prompt_chains;
+create policy "Superadmins manage chains" on public.prompt_chains for all to authenticated using (public.is_superadmin()) with check (public.is_superadmin());
+drop policy if exists "Superadmins manage chain steps" on public.prompt_chain_steps;
+create policy "Superadmins manage chain steps" on public.prompt_chain_steps for all to authenticated using (public.is_superadmin()) with check (public.is_superadmin());
+drop policy if exists "Superadmins manage chain runs" on public.prompt_chain_runs;
+create policy "Superadmins manage chain runs" on public.prompt_chain_runs for all to authenticated using (public.is_superadmin()) with check (public.is_superadmin());
 
