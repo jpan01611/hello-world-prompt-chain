@@ -1,7 +1,10 @@
 create extension if not exists pgcrypto;
 create table if not exists public.prompt_chains (id uuid primary key default gen_random_uuid(), name text not null, description text not null default '', active boolean not null default true, created_at timestamptz not null default now(), updated_at timestamptz not null default now());
 create table if not exists public.prompt_chain_steps (id uuid primary key default gen_random_uuid(), chain_id uuid not null references public.prompt_chains(id) on delete cascade, step_order integer not null check (step_order > 0), name text not null, prompt text not null, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), unique(chain_id, step_order));
-create table if not exists public.prompt_chain_runs (id uuid primary key default gen_random_uuid(), chain_id uuid not null references public.prompt_chains(id) on delete cascade, input text not null default '', output text not null, created_by uuid references auth.users(id) on delete set null, created_at timestamptz not null default now());
+create table if not exists public.prompt_chain_runs (id uuid primary key default gen_random_uuid(), chain_id uuid not null references public.prompt_chains(id) on delete cascade, input text not null default '', output text not null, media_url text, media_type text, created_by uuid references auth.users(id) on delete set null, created_at timestamptz not null default now());
+alter table public.prompt_chain_runs add column if not exists media_url text;
+alter table public.prompt_chain_runs add column if not exists media_type text;
+alter table public.prompt_chain_runs add column if not exists step_outputs jsonb;
 create index if not exists prompt_chain_steps_chain_order_idx on public.prompt_chain_steps(chain_id, step_order);
 create index if not exists prompt_chain_runs_chain_created_idx on public.prompt_chain_runs(chain_id, created_at desc);
 alter table public.prompt_chains enable row level security; alter table public.prompt_chain_steps enable row level security; alter table public.prompt_chain_runs enable row level security;
@@ -11,4 +14,3 @@ drop policy if exists "Superadmins manage chain steps" on public.prompt_chain_st
 create policy "Superadmins manage chain steps" on public.prompt_chain_steps for all to authenticated using (public.is_superadmin()) with check (public.is_superadmin());
 drop policy if exists "Superadmins manage chain runs" on public.prompt_chain_runs;
 create policy "Superadmins manage chain runs" on public.prompt_chain_runs for all to authenticated using (public.is_superadmin()) with check (public.is_superadmin());
-

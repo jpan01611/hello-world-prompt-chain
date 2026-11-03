@@ -1,7 +1,95 @@
 'use client';
-import { useState } from 'react';
-import { createChain, updateChain, deleteChain, createStep, updateStep, deleteStep, moveStep, runChain } from '@/lib/chain-actions';
-type Step = { id: string; step_order: number; name: string; prompt: string }; type Chain = { id: string; name: string; description: string; active: boolean; steps: Step[]; runs: { id: string; input: string; output: string; created_at: string }[] };
-export default function ChainBuilder({ initialChains }: { initialChains: Chain[] }) { const [chains] = useState(initialChains); const [selected, setSelected] = useState(initialChains[0]?.id ?? ''); const [dark, setDark] = useState(false); const chain = chains.find((item) => item.id === selected);
- const refresh = () => window.location.reload(); return <div className={dark ? 'app dark' : 'app'}><header className="topbar"><div><p className="eyebrow">SUPERADMIN TOOL</p><h1>Prompt Chain Studio</h1></div><div className="top-actions"><button className="secondary" onClick={() => setDark(!dark)}>{dark ? 'Light mode' : 'Dark mode'}</button><form action={async () => { const { createClient } = await import('@/lib/supabase/client'); const client = createClient(); await client.auth.signOut(); refresh(); }}><button className="secondary">Sign out</button></form></div></header><main className="workspace"><aside className="chain-list"><div className="section-title"><h2>Chains</h2><form action={async (form) => { await createChain(form); refresh(); }}><input name="name" placeholder="New chain name" required /><input name="description" placeholder="Description" /><button type="submit">+ Create chain</button></form></div>{chains.map((item) => <button className={item.id === selected ? 'chain-item selected' : 'chain-item'} onClick={() => setSelected(item.id)} key={item.id}><strong>{item.name}</strong><span>{item.steps.length} steps · {item.active ? 'Active' : 'Paused'}</span></button>)}</aside>{chain ? <section className="editor"><div className="editor-heading"><div><p className="eyebrow">Chain configuration</p><h2>{chain.name}</h2><p className="muted">{chain.description || 'No description yet.'}</p></div><form action={async (form) => { await deleteChain(form); refresh(); }}><input type="hidden" name="id" value={chain.id} /><button className="danger">Delete chain</button></form></div><form className="chain-settings" action={async (form) => { await updateChain(form); refresh(); }}><input type="hidden" name="id" value={chain.id} /><label>Name<input name="name" defaultValue={chain.name} required /></label><label>Description<input name="description" defaultValue={chain.description} /></label><label className="checkbox"><input type="checkbox" name="active" defaultChecked={chain.active} /> Active</label><button>Save chain</button></form><div className="steps-heading"><div><p className="eyebrow">Ordered workflow</p><h2>Steps</h2></div><span className="step-count">{chain.steps.length} steps</span></div><div className="steps">{chain.steps.map((step, index) => <article className="step-card" key={step.id}><div className="step-number">{index + 1}</div><div className="step-body"><form action={async (form) => { await updateStep(form); refresh(); }}><input type="hidden" name="id" value={step.id} /><label>Step name<input name="name" defaultValue={step.name} required /></label><label>Prompt instruction<textarea name="prompt" defaultValue={step.prompt} required /></label><button className="secondary">Save step</button></form><div className="step-controls"><form action={moveStep}><input type="hidden" name="chain_id" value={chain.id} /><input type="hidden" name="id" value={step.id} /><input type="hidden" name="direction" value="up" /><button disabled={index === 0} title="Move up">?</button></form><form action={moveStep}><input type="hidden" name="chain_id" value={chain.id} /><input type="hidden" name="id" value={step.id} /><input type="hidden" name="direction" value="down" /><button disabled={index === chain.steps.length - 1} title="Move down">?</button></form><form action={async (form) => { await deleteStep(form); refresh(); }}><input type="hidden" name="chain_id" value={chain.id} /><input type="hidden" name="id" value={step.id} /><button className="danger">Delete</button></form></div></div></article>)}</div><form className="new-step" action={async (form) => { await createStep(form); refresh(); }}><input type="hidden" name="chain_id" value={chain.id} /><h3>Add a step</h3><input name="name" placeholder="e.g. Describe the image" required /><textarea name="prompt" placeholder="What should this step do?" required /><button>Add step</button></form><section className="run-panel"><div><p className="eyebrow">Generate media</p><h2>Run this chain</h2><p className="muted">Provide an input and review the generated output below.</p></div><form action={async (form) => { await runChain(form); refresh(); }}><input type="hidden" name="chain_id" value={chain.id} /><textarea name="input" placeholder="Paste an image URL, description, or source text" required /><button>Run prompt chain</button></form>{chain.runs.length > 0 && <div className="runs"><h3>Generated media</h3>{chain.runs.map((run) => <article key={run.id}><time>{new Date(run.created_at).toLocaleString()}</time><pre>{run.output}</pre></article>)}</div>}</section></section> : <section className="empty"><h2>Create your first prompt chain</h2><p>Chains let you turn a sequence of instructions into reusable generated media.</p></section>}</main></div> }
 
+import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { createChain, updateChain, deleteChain, deleteRun, createStep, updateStep, deleteStep, reorderStep, runChain } from '@/lib/chain-actions';
+
+type Step = { id: string; step_order: number; name: string; prompt: string };
+type StepOutput = { name: string; prompt: string; output: string };
+type Run = { id: string; input: string; output: string; step_outputs: StepOutput[]; media_url: string | null; media_type: string | null; created_at: string; created_by: string | null };
+type Chain = { id: string; name: string; description: string; active: boolean; steps: Step[]; runs: Run[] };
+type Theme = 'system' | 'light' | 'dark';
+
+export default function ChainBuilder({ initialChains }: { initialChains: Chain[] }) {
+  const [chains, setChains] = useState(initialChains);
+  const [selected, setSelected] = useState(initialChains[0]?.id ?? '');
+  const [theme, setTheme] = useState<Theme>('system');
+  const [systemDark, setSystemDark] = useState(false);
+  const [draggedStep, setDraggedStep] = useState<string | null>(null);
+  const [dragOverStep, setDragOverStep] = useState<string | null>(null);
+  const [previewSteps, setPreviewSteps] = useState<Step[] | null>(null);
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [activePanel, setActivePanel] = useState<'chains' | 'runs'>('chains');
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const chain = chains.find((item) => item.id === selected);
+  const isDark = theme === 'dark' || (theme === 'system' && systemDark);
+  const refresh = () => window.location.reload();
+  const visibleSteps = previewSteps ?? chain?.steps ?? [];
+  const finishDrag = async () => {
+    if (!draggedStep || !chain) return;
+    const ordered = previewSteps ?? chain.steps;
+    const position = ordered.findIndex((candidate) => candidate.id === draggedStep);
+    if (position < 0) return;
+    const form = new FormData();
+    form.set('chain_id', chain.id);
+    form.set('id', draggedStep);
+    form.set('target_order', String(position + 1));
+    setDraggedStep(null);
+    setDragOverStep(null);
+    setPreviewSteps(null);
+    document.getElementById('prompt-chain-drag-preview')?.remove();
+    await reorderStep(form);
+    setChains((current) => current.map((candidate) => candidate.id === chain.id ? { ...candidate, steps: ordered } : candidate));
+  };
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const update = () => setSystemDark(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedImage) {
+      setImagePreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(selectedImage);
+    setImagePreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [selectedImage]);
+
+  return <div className={isDark ? 'app dark' : 'app'}>
+    <header className="topbar">
+      <div><p className="eyebrow">SUPERADMIN TOOL</p><h1>Prompt Chain Studio</h1></div>
+      <div className="top-actions">
+        <label className="theme-picker">Theme
+          <select value={theme} onChange={(event) => setTheme(event.target.value as Theme)}>
+            <option value="system">System default</option><option value="light">Light mode</option><option value="dark">Dark mode</option>
+          </select>
+        </label>
+        <form action={async () => { const { createClient } = await import('@/lib/supabase/client'); await createClient().auth.signOut(); refresh(); }}><button className="secondary">Sign out</button></form>
+      </div>
+    </header>
+    <main className="workspace">
+      <aside className="chain-list">
+        <div className="section-title"><h2>Chains</h2><form action={async (form) => { await createChain(form); refresh(); }}><input name="name" placeholder="New chain name" required /><input name="description" placeholder="Description" /><button type="submit">+ Create chain</button></form></div>
+        {chains.map((item) => <button className={item.id === selected ? 'chain-item selected' : 'chain-item'} onClick={() => { setSelected(item.id); setActivePanel('chains'); }} key={item.id}><strong>{item.name}</strong><span>{item.steps.length} steps · {item.active ? 'Active' : 'Paused'}</span></button>)}
+        <button className={activePanel === 'runs' ? 'sidebar-tag selected' : 'sidebar-tag'} onClick={() => { setActivePanel('runs'); document.getElementById('chain-runs')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}><strong>Chain run</strong><span>Run chains and view past results</span></button>
+      </aside>
+      {chain ? <section className="editor">
+        <div className="editor-heading"><div><p className="eyebrow">{activePanel === 'runs' ? 'Chain run' : 'Chain configuration'}</p><h2>{chain.name}</h2><p className="muted">{activePanel === 'runs' ? 'Run this chain and review its stored results.' : (chain.description || 'No description yet.')}</p></div>{activePanel === 'chains' && <form action={async (form) => { await deleteChain(form); refresh(); }}><input type="hidden" name="id" value={chain.id} /><button className="danger">Delete chain</button></form>}</div>
+        {activePanel === 'chains' && <>
+        <form className="chain-settings" action={async (form) => { await updateChain(form); refresh(); }}><input type="hidden" name="id" value={chain.id} /><label>Name<input name="name" defaultValue={chain.name} required /></label><label>Description<input name="description" defaultValue={chain.description} /></label><label className="checkbox"><input type="checkbox" name="active" defaultChecked={chain.active} /> Active</label><button>Save chain</button></form>
+        <div className="steps-heading"><div><p className="eyebrow">Ordered workflow</p><h2>Steps</h2><p className="reorder-hint">Drag the ⋮ handle. Cards slide elsewhere to preview the new position.</p></div><span className="step-count">{chain.steps.length} steps</span></div>
+        <div className="steps" onDragOver={(event) => { if (!draggedStep || !chain.steps.length) return; const last = event.currentTarget.querySelector('.step-card:last-child'); if (!last) return; const rect = last.getBoundingClientRect(); if (event.clientY <= rect.top + rect.height * 0.1) return; event.preventDefault(); const base = chain.steps.filter((candidate) => candidate.id !== draggedStep); const moved = chain.steps.find((candidate) => candidate.id === draggedStep); if (!moved) return; setPreviewSteps([...base, moved]); setDragOverStep(null); }} onDrop={(event) => { event.preventDefault(); void finishDrag(); }}>{visibleSteps.map((step, index) => <article key={step.id} className={`step-card ${draggedStep === step.id ? 'dragging' : ''} ${dragOverStep === step.id ? 'drag-over' : ''}`} onDragOver={(event) => { event.preventDefault(); if (!draggedStep || draggedStep === step.id) return; const rect = event.currentTarget.getBoundingClientRect(); const from = chain.steps.findIndex((candidate) => candidate.id === draggedStep); const target = chain.steps.findIndex((candidate) => candidate.id === step.id); const movingDown = from < target; const after = movingDown ? event.clientY >= rect.top + rect.height * 0.1 : event.clientY >= rect.bottom - rect.height * 0.1; const base = chain.steps.filter((candidate) => candidate.id !== draggedStep); const moved = chain.steps.find((candidate) => candidate.id === draggedStep); const targetIndex = base.findIndex((candidate) => candidate.id === step.id); if (!moved || targetIndex < 0) return; const reordered = [...base]; reordered.splice(Math.min(base.length, targetIndex + (after ? 1 : 0)), 0, moved); setPreviewSteps(reordered); setDragOverStep(step.id); }} onDragLeave={() => setDragOverStep(null)} onDrop={(event) => { event.preventDefault(); void finishDrag(); }}><button className="drag-handle" draggable onDragStart={(event) => { setDraggedStep(step.id); setPreviewSteps(chain.steps); const preview = event.currentTarget.closest('.step-card')?.cloneNode(true) as HTMLElement | null; if (preview) { preview.id = 'prompt-chain-drag-preview'; preview.classList.add('drag-preview'); document.body.appendChild(preview); event.dataTransfer.setDragImage(preview, 24, 24); } }} onDragEnd={() => { void finishDrag(); }} aria-label={`Drag ${step.name} to reorder`} title="Drag to reorder">⋮</button><div className="step-number">{index + 1}</div><div className="step-body"><form action={async (form) => { await updateStep(form); refresh(); }}><input type="hidden" name="id" value={step.id} /><label>Step name<input name="name" defaultValue={step.name} required /></label><label>Prompt instruction<textarea name="prompt" defaultValue={step.prompt} required /></label><button className="secondary">Save step</button></form><div className="step-controls"><form action={async (form) => { await deleteStep(form); refresh(); }}><input type="hidden" name="chain_id" value={chain.id} /><input type="hidden" name="id" value={step.id} /><button className="danger">Delete</button></form></div></div></article>)}</div>
+        <form className="new-step" action={async (form) => { await createStep(form); refresh(); }}><input type="hidden" name="chain_id" value={chain.id} /><h3>Add a step</h3><input name="name" placeholder="e.g. Describe the image" required /><textarea name="prompt" placeholder="What should this step do?" required /><button>Add step</button></form>
+        </>}
+        {activePanel === 'runs' && <section id="chain-runs" className="run-panel run-panel-active"><div><p className="eyebrow">Generated media for {chain.name}</p><h2>Run this chain</h2><p className="muted">Use an uploaded image, image URL, or text input as the chain source.</p></div><form className="run-form" action={async (form) => { await runChain(form); refresh(); }}><input type="hidden" name="chain_id" value={chain.id} /><label>LLM<select name="llm" defaultValue="openai"><option value="openai">OpenAI</option><option value="gemini">Gemini</option></select></label><label>Upload image <span className="muted">(optional)</span><input ref={imageInputRef} name="media_file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => setSelectedImage(event.target.files?.[0] ?? null)} /></label>{imagePreviewUrl && selectedImage && <div className="upload-preview"><img src={imagePreviewUrl} alt={`Preview of ${selectedImage.name}`} /><div><strong>{selectedImage.name}</strong><span>{Math.round(selectedImage.size / 1024)} KB</span></div><button type="button" className="secondary" onClick={() => { setSelectedImage(null); if (imageInputRef.current) imageInputRef.current.value = ''; }}>Remove</button></div>}<label>Media URL <span className="muted">(optional)</span><input name="media_url" type="url" placeholder="https://.../generated-image.png" /></label><input type="hidden" name="media_type" value="image" /><textarea name="input" placeholder="Describe the source or add text for the prompt chain" /><button>Run prompt chain</button></form>{chain.runs.length > 0 && <div className="runs"><h3>Past chain runs</h3><div className="table-scroll chain-runs-table-scroll"><table className="chain-runs-table"><thead><tr><th>Run ID</th><th>Image uploaded</th><th>Created</th><th>Created by</th><th>Actions</th></tr></thead><tbody>{chain.runs.map((run) => <tr key={run.id} className="run-row"><td className="id-cell"><Link className="table-link table-cell-link" href={`/chains/runs/${run.id}?chain=${chain.id}`}><code title={run.id}>{run.id.slice(0, 8)}…</code></Link></td><td><Link className="table-link table-cell-link" href={`/chains/runs/${run.id}?chain=${chain.id}`}>{run.media_url ? <img className="generated-media-preview" src={run.media_url} alt={`Media used by ${chain.name}`} /> : <span className="muted">No image</span>}</Link></td><td><Link className="table-link table-cell-link" href={`/chains/runs/${run.id}?chain=${chain.id}`}>{new Date(run.created_at).toLocaleString()}</Link></td><td><Link className="table-link table-cell-link" href={`/chains/runs/${run.id}?chain=${chain.id}`}><code title={run.created_by ?? ''}>{run.created_by ? `${run.created_by.slice(0, 8)}…` : '—'}</code></Link></td><td className="action-cell"><form action={async (form) => { await deleteRun(form); refresh(); }}><input type="hidden" name="id" value={run.id} /><button type="submit" className="danger">Delete</button></form></td></tr>)}</tbody></table></div></div>}</section>}
+      </section> : null}
+      {!chain && <section className="empty"><h2>Create your first prompt chain</h2><p>Chains turn ordered instructions into reusable generated media.</p></section>}
+    </main>
+  </div>;
+}
