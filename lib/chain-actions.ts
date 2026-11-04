@@ -1,5 +1,6 @@
 'use server';
 import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
 import { requireSuperadmin } from '@/lib/auth';
 import OpenAI from 'openai';
 function text(form: FormData, key: string) { return String(form.get(key) ?? '').trim(); }
@@ -31,6 +32,7 @@ async function generateWithLlm(llm: Llm, instruction: string, previousOutput: st
 }
 async function fail<T>(result: { error: { message: string } | null }, value?: T) { if (result.error) throw new Error(result.error.message); return value; }
 export async function createChain(form: FormData) { const { supabase } = await requireSuperadmin(); const result = await supabase.from('prompt_chains').insert({ name: text(form,'name'), description: text(form,'description'), active: true }).select('id').single(); await fail(result); revalidatePath('/chains'); }
+export async function createChainWithOptionalStep(form: FormData) { const { supabase } = await requireSuperadmin(); const result = await supabase.from('prompt_chains').insert({ name: text(form,'name'), description: text(form,'description'), active: true }).select('id').single(); await fail(result); const chain = result.data; if (!chain) throw new Error('The prompt chain was not created.'); const stepName = text(form, 'step_name'); const prompt = text(form, 'prompt'); if (stepName || prompt) { if (!stepName || !prompt) throw new Error('Provide both a step name and prompt, or leave both blank.'); await fail(await supabase.from('prompt_chain_steps').insert({ chain_id: chain.id, step_order: 1, name: stepName, prompt })); } revalidatePath('/chains'); redirect('/chains'); }
 export async function updateChain(form: FormData) { const { supabase } = await requireSuperadmin(); const result = await supabase.from('prompt_chains').update({ name: text(form,'name'), description: text(form,'description'), active: form.get('active') === 'on' }).eq('id', text(form,'id')); await fail(result); revalidatePath('/chains'); }
 export async function deleteChain(form: FormData) { const { supabase } = await requireSuperadmin(); const result = await supabase.from('prompt_chains').delete().eq('id', text(form,'id')); await fail(result); revalidatePath('/chains'); }
 export async function deleteRun(form: FormData) { const { supabase } = await requireSuperadmin(); const result = await supabase.from('prompt_chain_runs').delete().eq('id', text(form,'id')); await fail(result); revalidatePath('/chains'); }
