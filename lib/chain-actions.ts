@@ -10,7 +10,7 @@ async function generateWithLlm(llm: Llm, instruction: string, previousOutput: st
   if (llm === 'openai') {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error('OPENAI_API_KEY is not configured.');
-    const openai = new OpenAI({ apiKey });
+    const openai = new OpenAI({ apiKey, maxRetries: 0, timeout: 45_000 });
     const content = mediaUrl ? [{ type: 'text' as const, text: prompt }, { type: 'image_url' as const, image_url: { url: mediaUrl } }] : [{ type: 'text' as const, text: prompt }];
     const response = await openai.chat.completions.create({ model: process.env.OPENAI_MODEL || 'gpt-4o-mini', messages: [{ role: 'user', content }] });
     return response.choices[0]?.message?.content?.trim() || '';
@@ -25,7 +25,15 @@ async function generateWithLlm(llm: Llm, instruction: string, previousOutput: st
     const data = Buffer.from(await imageResponse.arrayBuffer()).toString('base64');
     parts.push({ inline_data: { mime_type: mimeType, data } });
   }
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL || 'gemini-3.8-flash'}:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ contents: [{ parts }] }) });
+   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL || 'gemini-3.8-flash'}:generateContent?key=${apiKey}`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  signal: AbortSignal.timeout(45_000),
+  body: JSON.stringify({
+    contents: [{ parts }],
+    generationConfig: { maxOutputTokens: 600 },
+  }),
+   });
   const body = await response.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[]; error?: { message?: string } };
   if (!response.ok) throw new Error(body.error?.message || 'Gemini request failed.');
   return body.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('').trim() || '';
